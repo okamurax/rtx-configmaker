@@ -30,6 +30,9 @@ struct ContentView: View {
                     vpnSection
                     remoteSection
                     securitySection
+                    customFilterSection
+                    outboundSection
+                    deviceControlSection
                     mgmtSection
                     ntpSection
                     syslogSection
@@ -462,6 +465,107 @@ struct ContentView: View {
     private var securitySection: some View {
         SectionCard(header: "フィルタ / セキュリティ", icon: "shield", isOn: $m.useSecurityFilter) {
             Toggle("外部からのICMP(ping)を許可", isOn: $m.passICMP)
+            Toggle("不正アクセス検知 (intrusion detection)", isOn: $m.intrusionDetection)
+            Text("※不正アクセス検知はWAN着信を検査。以下の拡張フィルタは標準フィルタ有効時に適用されます。")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: - カスタムフィルタ (自由定義)
+    private var customFilterSection: some View {
+        SectionCard(header: "カスタムフィルタ (自由定義)", icon: "slider.horizontal.3", isOn: $m.secCustomFilters) {
+            if !m.useSecurityFilter {
+                Text("標準セキュリティフィルタが無効のため適用されません。").font(.caption).foregroundColor(.orange)
+            }
+            ForEach($m.customFilters) { $f in
+                VStack(spacing: 6) {
+                    HStack {
+                        Picker("", selection: $f.direction) {
+                            Text("in").tag("in"); Text("out").tag("out")
+                        }.labelsHidden().frame(width: 64)
+                        Picker("", selection: $f.action) {
+                            Text("pass").tag("pass"); Text("reject").tag("reject"); Text("reject-nolog").tag("reject-nolog")
+                        }.labelsHidden().frame(width: 120)
+                        Button(role: .destructive) {
+                            m.customFilters.removeAll { $0.id == f.id }
+                        } label: { Image(systemName: "trash") }
+                    }
+                    HStack {
+                        TextField("送信元", text: $f.src).textFieldStyle(.roundedBorder)
+                        TextField("宛先", text: $f.dst).textFieldStyle(.roundedBorder)
+                    }
+                    HStack {
+                        TextField("プロトコル (* tcp udp icmp esp)", text: $f.proto).textFieldStyle(.roundedBorder)
+                        TextField("送信元ポート", text: $f.srcPort).textFieldStyle(.roundedBorder).frame(width: 90)
+                        TextField("宛先ポート", text: $f.dstPort).textFieldStyle(.roundedBorder).frame(width: 90)
+                    }
+                    TextField("メモ (任意)", text: $f.memo).textFieldStyle(.roundedBorder)
+                }
+                .padding(8).background(Color.secondary.opacity(0.08)).cornerRadius(6)
+            }
+            Button {
+                m.customFilters.append(CustomFilter())
+            } label: { Label("フィルタ規則を追加", systemImage: "plus") }
+            Text("上から順に評価され最初に一致した規則が適用されます (in/outとも標準規則より優先)。")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: - アウトバウンド制限
+    private var outboundSection: some View {
+        SectionCard(header: "アウトバウンド制限 (宛先遮断)", icon: "arrow.up.forward.circle", isOn: $m.secOutbound) {
+            if !m.useSecurityFilter {
+                Text("標準セキュリティフィルタが無効のため適用されません。").font(.caption).foregroundColor(.orange)
+            }
+            ForEach($m.outboundBlocks) { $b in
+                VStack(spacing: 6) {
+                    HStack {
+                        TextField("遮断する宛先IP/CIDR", text: $b.dst).textFieldStyle(.roundedBorder)
+                        Button(role: .destructive) {
+                            m.outboundBlocks.removeAll { $0.id == b.id }
+                        } label: { Image(systemName: "trash") }
+                    }
+                    HStack {
+                        TextField("プロトコル (*)", text: $b.proto).textFieldStyle(.roundedBorder).frame(width: 110)
+                        TextField("宛先ポート (*)", text: $b.port).textFieldStyle(.roundedBorder).frame(width: 100)
+                        TextField("メモ", text: $b.memo).textFieldStyle(.roundedBorder)
+                    }
+                }
+                .padding(8).background(Color.secondary.opacity(0.08)).cornerRadius(6)
+            }
+            Button {
+                m.outboundBlocks.append(OutboundBlock())
+            } label: { Label("遮断先を追加", systemImage: "plus") }
+            Text("内→外の通信で、指定宛先(ポート)への通信を遮断します。")
+                .font(.caption2).foregroundColor(.secondary)
+        }
+    }
+
+    // MARK: - 端末別インターネット制御
+    private var deviceControlSection: some View {
+        SectionCard(header: "端末別インターネット制御", icon: "person.2.badge.gearshape", isOn: $m.secDeviceControl) {
+            if !m.useSecurityFilter {
+                Text("標準セキュリティフィルタが無効のため適用されません。").font(.caption).foregroundColor(.orange)
+            }
+            Picker("方式", selection: $m.deviceMode) {
+                ForEach(DeviceControlMode.allCases) { Text($0.rawValue).tag($0) }
+            }
+            ForEach($m.deviceEntries) { $d in
+                HStack {
+                    TextField("端末IP/CIDR (例 192.168.100.50)", text: $d.ip).textFieldStyle(.roundedBorder)
+                    TextField("メモ", text: $d.memo).textFieldStyle(.roundedBorder).frame(width: 100)
+                    Button(role: .destructive) {
+                        m.deviceEntries.removeAll { $0.id == d.id }
+                    } label: { Image(systemName: "trash") }
+                }
+            }
+            Button {
+                m.deviceEntries.append(DeviceEntry())
+            } label: { Label("端末を追加", systemImage: "plus") }
+            Text(m.deviceMode == .allowlist
+                 ? "記載した端末のみインターネット接続を許可し、他のLAN端末は遮断します。"
+                 : "記載した端末のインターネット接続を遮断します。")
+                .font(.caption2).foregroundColor(.secondary)
         }
     }
 

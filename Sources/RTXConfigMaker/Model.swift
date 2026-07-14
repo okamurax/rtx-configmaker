@@ -90,6 +90,40 @@ struct RemoteUser: Identifiable, Equatable {
     var password: String = ""
 }
 
+// MARK: - カスタムフィルタ (自由定義)
+struct CustomFilter: Identifiable, Equatable {
+    let id = UUID()
+    var direction: String = "in"        // in / out
+    var action: String = "pass"         // pass / reject / reject-nolog
+    var src: String = "*"
+    var dst: String = "*"
+    var proto: String = "*"             // *, tcp, udp, tcp,udp, icmp, esp ...
+    var srcPort: String = "*"
+    var dstPort: String = "*"
+    var memo: String = ""
+}
+
+// MARK: - アウトバウンド遮断 (宛先/ポート)
+struct OutboundBlock: Identifiable, Equatable {
+    let id = UUID()
+    var dst: String = ""                // 宛先IP/CIDR
+    var proto: String = "*"
+    var port: String = "*"              // 宛先ポート
+    var memo: String = ""
+}
+
+// MARK: - 端末別インターネット制御
+enum DeviceControlMode: String, CaseIterable, Identifiable {
+    case blocklist = "遮断リスト方式 (記載端末を遮断)"
+    case allowlist = "許可リスト方式 (記載端末のみ許可)"
+    var id: String { rawValue }
+}
+struct DeviceEntry: Identifiable, Equatable {
+    let id = UUID()
+    var ip: String = ""                 // 端末IP/CIDR
+    var memo: String = ""
+}
+
 // MARK: - 設定モデル
 final class ConfigModel: ObservableObject {
 
@@ -163,6 +197,16 @@ final class ConfigModel: ObservableObject {
     // セキュリティ / フィルタ
     @Published var useSecurityFilter: Bool = true
     @Published var passICMP: Bool = true
+    @Published var intrusionDetection: Bool = false     // 不正アクセス検知
+
+    // フィルタ拡張 (いずれも標準セキュリティフィルタ有効時に適用)
+    @Published var secCustomFilters: Bool = false
+    @Published var customFilters: [CustomFilter] = []
+    @Published var secOutbound: Bool = false
+    @Published var outboundBlocks: [OutboundBlock] = []
+    @Published var secDeviceControl: Bool = false
+    @Published var deviceMode: DeviceControlMode = .blocklist
+    @Published var deviceEntries: [DeviceEntry] = []
 
     // 管理アクセス
     @Published var enableTelnet: Bool = false

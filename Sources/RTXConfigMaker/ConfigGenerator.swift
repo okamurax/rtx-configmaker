@@ -79,8 +79,8 @@ enum ConfigGenerator {
             add(" ip pp mtu \(mtu)")
             if m.naptEnabled { add(" ip pp nat descriptor \(natDesc)") }
             if m.useSecurityFilter {
-                add(" ip pp secure filter in \(inFilterList(m))")
-                add(" ip pp secure filter out \(outFilterList())")
+                add(" ip pp secure filter in \(inFilterList(m, lanNet))")
+                add(" ip pp secure filter out \(outFilterList(m, lanNet))")
             }
             add(" pp enable 1")
         case .dhcp:
@@ -88,8 +88,8 @@ enum ConfigGenerator {
             add("ip route default gateway dhcp lan2")
             if m.naptEnabled { add("ip lan2 nat descriptor \(natDesc)") }
             if m.useSecurityFilter {
-                add("ip lan2 secure filter in \(inFilterList(m))")
-                add("ip lan2 secure filter out \(outFilterList())")
+                add("ip lan2 secure filter in \(inFilterList(m, lanNet))")
+                add("ip lan2 secure filter out \(outFilterList(m, lanNet))")
             }
         case .staticIP:
             let wanPrefix = Int(m.staticWanPrefix)
@@ -97,8 +97,8 @@ enum ConfigGenerator {
             add("ip route default gateway \(m.staticWanGateway)")
             if m.naptEnabled { add("ip lan2 nat descriptor \(natDesc)") }
             if m.useSecurityFilter {
-                add("ip lan2 secure filter in \(inFilterList(m))")
-                add("ip lan2 secure filter out \(outFilterList())")
+                add("ip lan2 secure filter in \(inFilterList(m, lanNet))")
+                add("ip lan2 secure filter out \(outFilterList(m, lanNet))")
             }
         case .ipoe:
             // --- IPv6 (IPoE / NGN) ---
@@ -138,8 +138,8 @@ enum ConfigGenerator {
                 add(" ip tunnel nat descriptor \(natDesc)")
             }
             if m.useSecurityFilter {
-                add(" ip tunnel secure filter in \(inFilterList(m))")
-                add(" ip tunnel secure filter out \(outFilterList())")
+                add(" ip tunnel secure filter in \(inFilterList(m, lanNet))")
+                add(" ip tunnel secure filter out \(outFilterList(m, lanNet))")
             }
             add(" tunnel enable 1")
         }
@@ -218,6 +218,12 @@ enum ConfigGenerator {
                 add("ip filter 200101 pass * * udp * 500")
                 add("ip filter 200102 pass * * udp * 4500")
             }
+            // 追加フィルタ (カスタム / アウトバウンド / 端末別)
+            let xf = extraFilters(m, lanNet)
+            if !xf.isEmpty {
+                add("# 追加フィルタ (カスタム/アウトバウンド/端末別)")
+                for x in xf { add(x.def) }
+            }
             add("ip filter 200099 pass * * * * *")
             add("# --- 動的フィルタ定義 (ステートフル) ---")
             add("ip filter dynamic 200080 * * ftp")
@@ -250,6 +256,17 @@ enum ConfigGenerator {
                 add("ipv6 filter dynamic 101085 * * submission")
                 add("ipv6 filter dynamic 101098 * * tcp")
                 add("ipv6 filter dynamic 101099 * * udp")
+            }
+            add()
+        }
+
+        // ---- 不正アクセス検知 ----
+        if m.intrusionDetection {
+            add("# --- 不正アクセス検知 (WAN着信) ---")
+            switch m.wanType {
+            case .pppoe:              add("ip pp intrusion detection in on reject=on")
+            case .dhcp, .staticIP:    add("ip lan2 intrusion detection in on reject=on")
+            case .ipoe:               add("ip tunnel intrusion detection in on reject=on")
             }
             add()
         }
@@ -459,8 +476,56 @@ enum ConfigGenerator {
         return L.joined(separator: "\n")
     }
 
-    // 標準セキュリティフィルタ (in) ： 基本 + 開放ポート
-    private static func inFilterList(_ m: ConfigModel) -> String {
+    // 追加フィルタ (カスタム / アウトバウンド / 端末別) の定義。
+    // dir = "in" / "out"。番号と定義行を返し、定義出力とリスト参照で共用する。
+    struct XFilter { let num: Int; let dir: String; let def: String }
+
+    static func extraFilters(_ m: ConfigModel, _ lanNet: String) -> [XFilter] {
+        func memoSfx(_ s: String) -> String { s.isEmpty ? "" : "  # \(s)" }
+        var out: [XFilter] = []
+        // カスタムフィルタ (自由定義)
+        if m.secCustomFilters {
+            for (i, f) in m.customFilters.enumerated() {
+                let num = 200200 + i
+                let line = "ip filter \(num) \(f.action) \(f.src) \(f.dst) \(f.proto) \(f.srcPort) \(f.dstPort)"
+                out.append(XFilter(num: num, dir: f.direction, def: line + memoSfx(f.memo)))
+            }
+        }
+        // アウトバウンド遮断 (宛先/ポート) — 常に out 方向
+        if m.secOutbound {
+            for (i, b) in m.outboundBlocks.enumerated() where !b.dst.isEmpty {
+                let num = 200300 + i
+                let line = "ip filter \(num) reject * \(b.dst) \(b.proto) * \(b.port)"
+                out.append(XFilter(num: num, dir: "out", def: line + memoSfx(b.memo)))
+            }
+        }
+        // 端末別インターネット制御 — out 方向
+        if m.secDeviceControl {
+            let entries = m.deviceEntries.filter { !$0.ip.isEmpty }
+            switch m.deviceMode {
+            case .allowlist:
+                for (i, d) in entries.enumerated() {
+                    let num = 200400 + i
+                    out.append(XFilter(num: num, dir: "out",
+                        def: "ip filter \(num) pass \(d.ip) * * * *" + memoSfx(d.memo)))
+                }
+                if !entries.isEmpty {
+                    out.append(XFilter(num: 200450, dir: "out",
+                        def: "ip filter 200450 reject \(lanNet) * * * *  # 許可リスト外の端末を遮断"))
+                }
+            case .blocklist:
+                for (i, d) in entries.enumerated() {
+                    let num = 200400 + i
+                    out.append(XFilter(num: num, dir: "out",
+                        def: "ip filter \(num) reject \(d.ip) * * * *" + memoSfx(d.memo)))
+                }
+            }
+        }
+        return out
+    }
+
+    // 標準セキュリティフィルタ (in) ： 基本 + 開放ポート + カスタムin
+    private static func inFilterList(_ m: ConfigModel, _ lanNet: String) -> String {
         var nums = ["200003", "200020", "200021", "200022", "200023", "200024", "200025"]
         if m.passICMP { nums.append("200030") }
         nums.append("200032")
@@ -474,12 +539,18 @@ enum ConfigGenerator {
         if !activeVpn.isEmpty || m.remoteEnabled {
             nums.append(contentsOf: ["200100", "200101", "200102"])
         }
+        // カスタムフィルタ (in方向)
+        for x in extraFilters(m, lanNet) where x.dir == "in" { nums.append(String(x.num)) }
         return nums.joined(separator: " ")
     }
 
-    // 標準セキュリティフィルタ (out) ： ステートフル
-    private static func outFilterList() -> String {
-        return "200013 200020 200021 200022 200023 200024 200025 200099 dynamic 200080 200081 200082 200083 200084 200085 200098 200099"
+    // 標準セキュリティフィルタ (out) ： 追加フィルタ(out) + ステートフル
+    private static func outFilterList(_ m: ConfigModel, _ lanNet: String) -> String {
+        var nums = ["200013", "200020", "200021", "200022", "200023", "200024", "200025"]
+        // 追加フィルタ(out方向)を pass-all(200099)より前に挿入
+        for x in extraFilters(m, lanNet) where x.dir == "out" { nums.append(String(x.num)) }
+        nums.append("200099")
+        return nums.joined(separator: " ") + " dynamic 200080 200081 200082 200083 200084 200085 200098 200099"
     }
 
     // IPoE用 IPv6フィルタ (in / out)
