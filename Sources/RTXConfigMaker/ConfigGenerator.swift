@@ -44,7 +44,11 @@ enum ConfigGenerator {
             add("console lines infinity")
             add("login timeout \(Int(m.loginTimeout))")
             if !m.loginUser.isEmpty {
-                add("login user \(m.loginUser) \(m.loginPassword.isEmpty ? "パスワード" : m.loginPassword)")
+                if m.loginPassword.isEmpty {
+                    add("# login user \(m.loginUser) <パスワード>   ← 半角英数字で入力して有効化")
+                } else {
+                    add("login user \(m.loginUser) \(m.loginPassword)")
+                }
             }
             add()
         }
@@ -98,10 +102,8 @@ enum ConfigGenerator {
             }
         case .ipoe:
             // --- IPv6 (IPoE / NGN) ---
-            add("# IPv6 (IPoE / NGN網)")
-            add("ipv6 lan2 address dhcp")
+            add("# IPv6 (IPoE / NGN網) ※RA方式。IPv6アドレス/デフォルト経路はRAで自動取得")
             add("ipv6 lan2 dhcp service client ir=on")
-            add("ipv6 route default gateway dhcp lan2")
             if m.distributeIPv6 {
                 add("ipv6 prefix 1 ra-prefix@lan2::/64")
                 add("ipv6 lan1 address ra-prefix@lan2::1/64")
@@ -128,7 +130,7 @@ enum ConfigGenerator {
             case .mapE:
                 add(" tunnel encapsulation map-e")
                 add(" tunnel map-e type \(m.mapEProvider.mapEType)")
-                add(" # ※map-e対応はファーム Rev.15.04系。type名はご契約サービスに合わせて確認")
+                add(" # ※map-e対応はファーム Rev.15.04.04 以降。type名はご契約サービスに合わせて確認")
             }
             add(" ip tunnel mtu 1460")
             add(" ip tunnel tcp mss limit auto")
@@ -269,7 +271,7 @@ enum ConfigGenerator {
                 let n = tunnelBase + idx + 1
                 let policyId = 100 + n
                 add("tunnel select \(n)")
-                add(" description tunnel \(t.memo)")
+                if !t.memo.isEmpty { add(" description tunnel \(t.memo)") }
                 add(" ipsec tunnel \(n)")
                 add("  ipsec sa policy \(policyId) \(n) \(esp)")
                 add("  ipsec ike encryption \(n) \(ikeEnc)")
@@ -418,7 +420,7 @@ enum ConfigGenerator {
         if m.ntpEnabled {
             add("# --- 時刻同期 (NTP) ---")
             add("schedule at 1 startup * ntpdate \(m.ntpServer) syslog")
-            add("schedule at 2 */6:00 * ntpdate \(m.ntpServer) syslog")
+            add("schedule at 2 */* 03:00 * ntpdate \(m.ntpServer) syslog")
             add()
         }
 
